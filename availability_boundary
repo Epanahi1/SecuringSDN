@@ -1,0 +1,227 @@
+//================================================================
+// Formal Verification of SDN State Exhaustion
+// Tool: PAT Model Checker version 3.5.1
+// Admissible Behavior = All, System Abstraction = False
+//================================================================
+// Constant Definitions
+//=============================================================
+#define NumPorts 8;
+#define NumClients 5;
+#define NumHosts 1;
+#define NumProxies 5;
+#define N_max 2; 
+
+//=============================================================
+// Enumerations
+//=============================================================
+enum{PktOut,PktRelay,PktIn,PktInRep}; 
+enum{SYN,ACK,DATA};
+enum{Port0,Port1,Port2,Port3,Port4,Port5,Port6,Port7}; 
+enum{Proxy0,Proxy1,Proxy2,Proxy3,Proxy4}; 
+enum{C0,C1,C2,AFlood,ASilent}; 
+enum{H};
+enum{C};
+
+//=============================================================
+// Channels 
+//=============================================================
+channel rep_out 0;         
+channel cmd_in 0;          
+channel srv_out_in[NumPorts] 0;  
+channel srv_out[NumPorts] 0;     
+channel ch_in[NumClients] 0;       
+channel ch_out[NumClients] 0;      
+channel CHan 0;            
+channel CEg 0;             
+channel sm_in 0;           
+channel sm_out 0;          
+channel SHan_srv 0;        
+channel SrvXmit 0;         
+channel EHan[NumClients] 0;        
+channel ESend[NumClients] 0;       
+channel AHand_Flood 0;
+channel AHand_Silent 0;    
+
+//=============================================================
+// State Tables
+//=============================================================
+var RoutingState[NumClients][NumHosts]=[0,0,0,0,0]; 
+var ConnTable[NumClients][NumHosts][7]=[0,0,0,0,0,0,Proxy2, 
+                                        0,0,0,0,0,0,Proxy1,
+                                        0,0,0,0,0,0,Proxy0,
+                                        0,0,0,0,0,0,Proxy3,
+                                        0,0,0,0,0,0,Proxy4];
+var IPTable[NumProxies][NumHosts]=[C2,C1,C0,AFlood,ASilent]; 
+var RequestCount[NumClients][NumHosts]=[0,0,0,0,0]; 
+var RuleTable[NumClients][NumHosts][2]=[Port0,Port4,Port1,Port5,Port2,Port6,Port3,Port7,Port0,Port4];
+var ActiveStates=0; 
+var N=0;
+
+//=============================================================
+// Controller
+//=============================================================
+CtrlUnit = (CtrlIngress|||CtrlEgress)||CtrlLogic;
+
+CtrlIngress = rep_out?m2.i.m1.SIP.SP.DIP.DP.SEQ->CHan!m2.i.m1.SIP.SP.DIP.DP.SEQ->CtrlIngress;
+
+CtrlLogic = CHan?m2.i.m1.SIP.SP.DIP.DP.SEQ->CtrlLogic1(m2,i,m1,SIP,SP,DIP,DP,SEQ);CtrlLogic;
+
+CtrlLogic1(m2,i,m1,SIP,SP,DIP,DP,SEQ) =
+if(m2==PktIn && m1==ACK){
+    CEg!PktOut.i.m1.SIP.SP.DIP.DP.SEQ.RuleTable[SIP][H][1]->Skip};
+if(m2==PktInRep && m1==ACK){
+    CEg!PktRelay.i.m1.SIP.SP.DIP.DP.SEQ->Skip};
+
+CtrlEgress = ((CEg?m.i.m1.SIP.SP.DIP.DP.SEQ.e->cmd_in!m.i.m1.SIP.SP.DIP.DP.SEQ.e->Skip)
+             [](CEg?m.i.m1.SIP.SP.DIP.DP.SEQ->cmd_in!m.i.m1.SIP.SP.DIP.DP.SEQ->Skip));CtrlEgress;
+
+//=============================================================
+// Switch
+//=============================================================
+SwitchNode = (Ingress|||Egress)||StateManager;
+
+Ingress = (([]i:{0..NumClients-1} @ ch_in[i]?m1.SIP.SP.DIP.DP.SEQ->sm_in!i.m1.SIP.SP.DIP.DP.SEQ->Skip)
+          []([]h:{0..NumPorts-1} @ srv_out_in[h]?m1.SIP.SP.DIP.DP.SEQ.m2.SIP1.SP1.DIP1.DP1.SEQ1->sm_in!h.m1.SIP.SP.DIP.DP.SEQ.m2.SIP1.SP1.DIP1.DP1.SEQ1->Skip)
+          [](cmd_in?m2.i.m1.SIP.SP.DIP.DP.SEQ.e->sm_in!C.m2.i.m1.SIP.SP.DIP.DP.SEQ.e->Skip)
+          [](cmd_in?m2.i.m1.SIP.SP.DIP.DP.SEQ->sm_in!C.m2.i.m1.SIP.SP.DIP.DP.SEQ->Skip));Ingress;
+
+StateManager = (sm_in?i.m1.SIP.SP.DIP.DP.SEQ->StateManager1(i,m1,SIP,SP,DIP,DP,SEQ)
+               [](sm_in?h.m1.SIP.SP.DIP.DP.SEQ.m2.SIP1.SP1.DIP1.DP1.SEQ1->StateManager2(h,m1,SIP,SP,DIP,DP,SEQ,m2,SIP1,SP1,DIP1,DP1,SEQ1))
+               [](sm_in?C.m2.i.m1.SIP.SP.DIP.DP.SEQ.e->StateManager3(m2,i,m1,SIP,SP,DIP,DP,SEQ,e))
+               [](sm_in?C.m2.i.m1.SIP.SP.DIP.DP.SEQ->StateManager4(m2,i,m1,SIP,SP,DIP,DP,SEQ)));StateManager;
+
+StateManager1(i,m1,SIP,SP,DIP,DP,SEQ) =
+if(m1==SYN && RoutingState[SIP][H]==0){
+    {RequestCount[SIP][H]=RequestCount[SIP][H]+1;}->
+    sm_out!i.ACK.DIP.DP.SIP.SP.SEQ+1.SYN.DIP.DP.SIP.SP.N->Skip};
+if(m1==ACK && RoutingState[SIP][H]==0 && ConnTable[SIP][H][2]+1==SEQ && ActiveStates < N_max){
+    {RequestCount[SIP][H]=RequestCount[SIP][H]+1;
+     ActiveStates = ActiveStates + 1;
+     ConnTable[SIP][H][0]=DP;
+     ConnTable[SIP][H][1]=DIP;
+     ConnTable[SIP][H][2]=SEQ;
+     ConnTable[SIP][H][3]=N;}->
+    sm_out!C.PktIn.i.m1.SIP.SP.DIP.DP.SEQ->Skip};
+if(m1==DATA && RoutingState[SIP][H]==1 && ActiveStates > 0){
+    sm_out!ConnTable[SIP][H][5].DATA.ConnTable[SIP][H][6].ConnTable[SIP][H][5].DIP.DP.ConnTable[SIP][H][2]->
+    {ConnTable[SIP][H][2]=ConnTable[SIP][H][2]+1;
+     ActiveStates = ActiveStates - 1;}->Skip}
+else{Skip};
+
+StateManager2(h,m1,SIP,SP,DIP,DP,SEQ,m2,SIP1,SP1,DIP1,DP1,SEQ1) =
+if(m1==ACK && RoutingState[IPTable[DIP][H]][H]==0 && m2==SYN){
+    sm_out!h.ACK.DIP1.DP1.SIP1.SP1.SEQ1+1->Skip;
+    {ConnTable[IPTable[DIP][H]][H][4]=SEQ1;}->
+    sm_out!C.PktInRep.h.ACK.DIP1.DP1.SIP1.SP1.SEQ1+1->Skip};
+
+StateManager3(m2,i,m1,SIP,SP,DIP,DP,SEQ,e)=
+if(m2==PktOut){
+    {ConnTable[SIP][H][5]=e;}->
+    sm_out!e.SYN.ConnTable[SIP][H][6].e.DIP.DP.ConnTable[SIP][H][2]->Skip};
+
+StateManager4(m2,i,m1,SIP,SP,DIP,DP,SEQ) =
+if(m2==PktRelay){
+    {RoutingState[IPTable[SIP][H]][H]=1;}->Skip};
+
+Egress = ((sm_out?h.m1.SIP.SP.DIP.DP.SEQ->srv_out[h]!m1.SIP.SP.DIP.DP.SEQ->Skip)
+         [](sm_out?i.m1.SIP.SP.DIP.DP.SEQ.m2.SIP1.SP1.DIP1.DP1.SEQ1->ch_out[i]!m1.SIP.SP.DIP.DP.SEQ.m2.SIP1.SP1.DIP1.DP1.SEQ1->Skip)
+         [](sm_out?C.m2.i.m1.SIP.SP.DIP.DP.SEQ->rep_out!m2.i.m1.SIP.SP.DIP.DP.SEQ->Skip));Egress;
+
+//=============================================================
+// Endpoint 
+//=============================================================
+Endpoint(x) = (EndRecv(x)|||(EndSender(x)|||EndDataSender(x)))||EndLogic(x);
+
+EndRecv(x) = (ch_out[x]?m1.SIP.SP.DIP.DP.SEQ.m2.SIP1.SP1.DIP1.DP1.SEQ1->EHan[x]!m1.SIP.SP.DIP.DP.SEQ.m2.SIP1.SP1.DIP1.DP1.SEQ1->Skip);EndRecv(x);
+
+EndLogic(x) = EHan[x]?m1.SIP.SP.DIP.DP.SEQ.m2.SIP1.SP1.DIP1.DP1.SEQ1->EndLogic1(x,m1,SIP,SP,DIP,DP,SEQ,m2,SIP1,SP1,DIP1,DP1,SEQ1);EndLogic(x);
+
+EndLogic1(x,m1,SIP,SP,DIP,DP,SEQ,m2,SIP1,SP1,DIP1,DP1,SEQ1) =
+if(m1==ACK && m2==SYN){
+    ESend[x]!ACK.DIP1.DP1.SIP1.SP1.SEQ1+1->Skip;
+    ESend[x]!DATA.DIP1.DP1.SIP1.SP1.SEQ1+1->Skip};
+
+EndSender(x)  = ch_in[x]!SYN.x.Port1.H.Port0.N->Skip;
+EndDataSender(x) = ESend[x]?m.SIP.SP.DIP.DP.SEQ->ch_in[x]!m.SIP.SP.DIP.DP.SEQ->EndDataSender(x);
+
+//=============================================================
+// Server 
+//=============================================================
+Server = (SrvSender|||SrvRecv)||SrvLogic;
+
+SrvRecv = ([]i:{0..NumPorts-1} @ srv_out[i]?m1.SIP.SP.DIP.DP.SEQ->SHan_srv!i.m1.SIP.SP.DIP.DP.SEQ->Skip);SrvRecv;
+
+SrvLogic = SHan_srv?i.m1.SIP.SP.DIP.DP.SEQ->SrvLogic1(i,m1,SIP,SP,DIP,DP,SEQ);SrvLogic;
+
+SrvLogic1(i,m1,SIP,SP,DIP,DP,SEQ) =
+if(m1==SYN){
+    SrvXmit!i.ACK.DIP.DP.SIP.SP.SEQ+1.SYN.DIP.DP.SIP.SP.N->Skip};
+
+SrvSender = SrvXmit?i.m1.SIP.SP.DIP.DP.SEQ.m2.SIP1.SP1.DIP1.DP1.SEQ1->srv_out_in[i]!m1.SIP.SP.DIP.DP.SEQ.m2.SIP1.SP1.DIP1.DP1.SEQ1->Skip;SrvSender;
+
+//=============================================================
+// Attacker 1: SYN Flood
+//=============================================================
+FloodAdv = (AdvRecv_Flood|||FloodSender)||AdvLogic_Flood;
+
+AdvRecv_Flood = ch_out[AFlood]?m1.SIP.SP.DIP.DP.SEQ.m2.SIP1.SP1.DIP1.DP1.SEQ1->
+                AHand_Flood!m1.SIP.SP.DIP.DP.SEQ.m2.SIP1.SP1.DIP1.DP1.SEQ1->
+                Skip;AdvRecv_Flood;
+
+AdvLogic_Flood = AHand_Flood?m1.SIP.SP.DIP.DP.SEQ.m2.SIP1.SP1.DIP1.DP1.SEQ1->
+                 AdvLogic_Flood;
+
+FloodSender   = ch_in[AFlood]!SYN.AFlood.Port1.H.Port0.N->FloodSender_1;
+FloodSender_1 = ch_in[AFlood]!SYN.AFlood.Port1.H.Port0.N->Skip;
+
+//=============================================================
+// Attacker 2: Buffer Saturation (SilentAdv)
+//=============================================================
+SilentAdv = (AdvRecv_Silent|||SilentSender)||AdvLogic_Silent;
+
+AdvRecv_Silent = ch_out[ASilent]?m1.SIP.SP.DIP.DP.SEQ.m2.SIP1.SP1.DIP1.DP1.SEQ1->
+                 AHand_Silent!m1.SIP.SP.DIP.DP.SEQ.m2.SIP1.SP1.DIP1.DP1.SEQ1->
+                 Skip;AdvRecv_Silent;
+
+AdvLogic_Silent = AHand_Silent?m1.SIP.SP.DIP.DP.SEQ.m2.SIP1.SP1.DIP1.DP1.SEQ1->
+                  AdvLogic_Silent;
+
+SilentSender = ch_in[ASilent]!SYN.ASilent.Port1.H.Port0.N->ch_in[ASilent]!ACK.ASilent.Port1.H.Port0.1->Skip;
+
+//=============================================================
+// System Definitions
+//=============================================================
+System_Baseline         = (|||x:{C0,C1}@Endpoint(x))||SwitchNode||CtrlUnit||Server;
+System_C0               = Endpoint(C0)||SwitchNode||CtrlUnit||Server;
+System_C1               = Endpoint(C1)||SwitchNode||CtrlUnit||Server;
+System_Flood_C0         = (FloodAdv|||Endpoint(C0))||SwitchNode||CtrlUnit||Server;
+System_Flood_C1         = (FloodAdv|||Endpoint(C1))||SwitchNode||CtrlUnit||Server;
+System_Silent_Both      = (|||x:{C0,C1}@Endpoint(x)|||SilentAdv)||SwitchNode||CtrlUnit||Server;
+System_BothAttacks      = (|||x:{C0,C1}@Endpoint(x)|||(FloodAdv||SilentAdv))||SwitchNode||CtrlUnit||Server;
+System_FloodOnly        = FloodAdv||SwitchNode||CtrlUnit||Server;
+System_AdvBoth          = (FloodAdv||SilentAdv)||SwitchNode||CtrlUnit||Server;
+
+//=============================================================
+// Assertions 
+//=============================================================
+
+// Safety
+#define NoFloodState RoutingState[AFlood][H] == 0;
+#assert System_FloodOnly |= [] NoFloodState;
+
+#define NoFloodStateCombined RoutingState[AFlood][H] == 0;
+#assert System_AdvBoth |= [] NoFloodStateCombined;
+
+// Liveness
+#define ClientDone_C0  RequestCount[C0][H] == 2 && RoutingState[C0][H] == 1;
+#define ClientDone_C1  RequestCount[C1][H] == 2 && RoutingState[C1][H] == 1;
+#define ClientDone_Two RequestCount[C0][H] == 2 && RoutingState[C0][H] == 1 &&
+                       RequestCount[C1][H] == 2 && RoutingState[C1][H] == 1;
+
+#assert System_C0               |=<> ClientDone_C0;
+#assert System_C1               |=<> ClientDone_C1;
+#assert System_Baseline         |=<> ClientDone_Two;
+#assert System_Flood_C0         |=<> ClientDone_C0;
+#assert System_Flood_C1         |=<> ClientDone_C1;
+#assert System_Silent_Both      |=<> ClientDone_Two;
+#assert System_BothAttacks      |=<> ClientDone_Two;
